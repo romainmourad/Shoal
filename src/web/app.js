@@ -129,6 +129,25 @@ function ensureTerm(id) {
   const uni = new Unicode11Addon.Unicode11Addon(); term.loadAddon(uni); term.unicode.activeVersion = "11";
   term.open(el);
   term.onData((d) => send({ t: "in", id, data: d }));
+  // when the app reads the mouse (Claude Code full screen), xterm turns a trackpad gesture into
+  // very few wheel steps (small moves damped to 30 %, at most one step per event): scrolling lagged behind the
+  // fingers. Here every line of movement becomes one wheel step, like Terminal.app.
+  let wheelAcc = 0;
+  term.attachCustomWheelEventHandler((e) => {
+    const core = term._core, ms = core && core.coreMouseService;
+    if (!ms || !ms.areMouseEventsActive || e.shiftKey || !e.deltaY) return true;
+    const cell = core._renderService?.dimensions?.css?.cell?.height;
+    const pos = cell && core._mouseService?.getMouseReportCoords(e, core.screenElement);
+    if (!pos) return true;
+    const lines = e.deltaMode === 1 ? e.deltaY : e.deltaMode === 2 ? e.deltaY * term.rows : e.deltaY / cell;
+    if (Math.sign(lines) !== Math.sign(wheelAcc)) wheelAcc = 0; // direction change: start over
+    wheelAcc += lines;
+    const n = Math.trunc(wheelAcc); wheelAcc -= n;
+    for (let i = 0; i < Math.min(Math.abs(n), 60); i++)
+      ms.triggerMouseEvent({ col: pos.col, row: pos.row, x: pos.x, y: pos.y, button: 4, action: n < 0 ? 0 : 1, ctrl: e.ctrlKey, alt: e.altKey, shift: false });
+    e.preventDefault(); e.stopPropagation();
+    return false;
+  });
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
     if (e.key === "Enter" && e.shiftKey) { send({ t: "in", id, data: "\x1b\r" }); return false; } // newline in the prompt
@@ -151,12 +170,20 @@ function flushTerm(id) {
   if (!t || !isLive(id)) return;
   if (t.stale) { t.stale = false; send({ t: "sync", id }); return; }
   if (!t.pendLen && !t.reset) return;
+  const replay = t.reset;
   if (t.reset) { t.term.reset(); t.reset = false; }
   const data = t.pend.length === 1 ? t.pend[0] : t.pend.join("");
   t.pend = []; t.pendLen = 0;
-  t.term.write(data);
+  t.term.write(data, replay ? () => repaintFullScreen(id) : undefined);
 }
 document.addEventListener("visibilitychange", () => { if (!document.hidden) flushTerm(active); });
+// a replayed full-screen app only has the end of its output (the buffer is trimmed): ask it to redraw
+function repaintFullScreen(id) {
+  const t = terms.get(id);
+  if (!t || t.term.buffer.active.type !== "alternate" || t.term.rows < 6) return;
+  send({ t: "resize", id, cols: t.term.cols, rows: t.term.rows - 1 });
+  setTimeout(() => { const u = terms.get(id); if (u) send({ t: "resize", id, cols: u.term.cols, rows: u.term.rows }); }, 80);
+}
 
 function syncTerms() {
   const ids = new Set(sessions.map((s) => s.id));

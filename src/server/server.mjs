@@ -174,6 +174,20 @@ function defaultFolder() {
   try { fs.mkdirSync(WORKSPACE, { recursive: true }); return WORKSPACE; } catch { return HOME; }
 }
 
+// DEC private modes worth restoring when the output buffer is trimmed
+const MODE_RE = /\x1b\[\?([\d;]+)([hl])/g;
+const ALT_MODES = ["47", "1047", "1049"];
+const KEEP_MODES = new Set([...ALT_MODES, "1", "25", "1000", "1002", "1003", "1004", "1005", "1006", "1015", "2004"]);
+function trackModes(modes, text) {
+  for (const m of text.matchAll(MODE_RE)) for (const n of m[1].split(";")) if (KEEP_MODES.has(n)) modes[n] = m[2];
+  return modes;
+}
+function modePrefix(modes) { // alternate screen first (it switches buffers), then the others
+  let p = ALT_MODES.some((k) => modes[k] === "h") ? "\x1b[?1049h" : "";
+  for (const [k, v] of Object.entries(modes)) if (!ALT_MODES.includes(k)) p += `\x1b[?${k}${v}`;
+  return p;
+}
+
 function createSession(cwd, resume, model, { remember = true } = {}) {
   if (!model && !resume) model = settings.defaultModel;
   cwd = cwd && fs.existsSync(cwd) ? cwd : defaultFolder();
@@ -209,8 +223,14 @@ function createSession(cwd, resume, model, { remember = true } = {}) {
     // thousands of small chunks cost more memory than one block: merge them from time to time
     if (s.buf.length > 800) s.buf = [s.buf.join("")];
     if (s.bufLen > 1_500_000) { // keep ~1 MB, cut on a newline (never inside an escape sequence)
-      const all = s.buf.join(""), cut = all.indexOf("\n", all.length - 1_000_000);
-      s.buf = [all.slice(cut < 0 ? all.length - 1_000_000 : cut + 1)]; s.bufLen = s.buf[0].length;
+      const all = s.buf.join(""), from = all.length - 1_000_000;
+      // full-screen apps (Claude Code) rarely print a newline: otherwise cut just before an escape sequence
+      let start = all.indexOf("\n", from) + 1;
+      if (start === 0) { const esc = all.indexOf("\x1b", from); start = esc < 0 ? from : esc; }
+      // the modes set in the dropped part (alternate screen, mouse reporting, paste…) are put back
+      // at the start, or a replay rebuilds the screen in the wrong buffer (stacked frames, broken scrollbar)
+      s.modes = trackModes(s.modes || {}, all.slice(0, start));
+      s.buf = [modePrefix(s.modes) + all.slice(start)]; s.bufLen = s.buf[0].length;
     }
     broadcast({ t: "out", id, data: d });
   });
