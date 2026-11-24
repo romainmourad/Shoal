@@ -274,38 +274,42 @@ img.logo { width: 34px; height: 34px; margin: -4px; filter: drop-shadow(0 4px 10
 .more:hover { color: var(--text); background: var(--hover); }
 #pSub:empty { display: none; }
 
-/* ---------------- small screen: compact right column ---------------- */
-.prod-summary { display: none; }
+/* ---------------- right column: compact cards ---------------- */
+/* limits: one row per window (week, 5 h) */
+#usageCard { padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.lim-row { display: grid; grid-template-columns: 54px 38px minmax(40px, 1fr) auto; align-items: center; gap: 8px; font-size: 12px; }
+.lim-lbl { color: var(--text-2); font-weight: 600; white-space: nowrap; }
+.lim-pct { color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; }
+.lim-meter { width: 100%; height: 6px; position: relative; overflow: visible; }
+.lim-meter i { border-radius: 99px; }
+.lim-reset { color: var(--muted); font-size: 11.5px; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; min-width: 44px; }
+#usageCard .today-row { font-size: 11.5px; margin: 0; }
+#u5h:empty { display: none; }
+#u5h { font-size: 11.5px; margin: 0; }
+
+/* hours saved: an accordion in the column. Closed = one line; open = fixed height (the same for every week),
+   the task list scrolls inside, the header stays on top with a chevron to collapse */
+#prodCard { padding: 0; display: flex; flex-direction: column; flex: none; }
+#prodCard > :not(.prod-summary) { display: none; }
+.prod-summary { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 11px 14px; border-radius: var(--radius); text-align: left; flex: none; }
+.prod-summary:hover { background: var(--raised); }
+.ps-num { font-size: 18px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.ps-num b { font-weight: 700; }
+.ps-lbl { font-size: 12.5px; color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ps-go { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-2); align-self: center; }
+.prod-summary:hover .ps-go { color: var(--text); }
+.ps-chev { transition: transform 0.2s ease; transform: rotate(180deg); }
+#prodCard.open .ps-chev { transform: none; }
+#prodCard.open { height: min(430px, 52vh); }
+#prodCard.open > .prod-summary { border-radius: var(--radius) var(--radius) 0 0; border-bottom: 1px solid var(--border); }
+#prodCard.open > .card-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px 0; flex: none; }
+#prodCard.open > #pSub:not(:empty) { display: block; padding: 8px 14px 0; }
+#prodCard.open > .tasks { display: flex; flex: 1; min-height: 0; max-height: none; overflow-y: auto; margin: 8px 0 0; padding: 0 10px 10px 14px; border-top: 0; }
+#prodCard .card-head .info { flex: none; }
+
 @media (max-height: 940px) {
   .side { gap: 10px; }
   .convs { min-height: 120px; }
-  /* weekly limit on two lines */
-  #usageCard { padding: 10px 14px; }
-  #usageCard .card-head { font-size: 12px; }
-  #usageCard .big { display: none; }
-  #usageCard .card-head { flex-wrap: nowrap; gap: 8px; }
-  #usageCard .card-head > span:first-child { font-size: 0; white-space: nowrap; }
-  #usageCard .card-head > span:first-child::after { content: "Semaine · " attr(data-pct); font-size: 12.5px; color: var(--text); font-weight: 700; }
-  html[lang="en"] #usageCard .card-head > span:first-child::after { content: "Week · " attr(data-pct); }
-  #uReset { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
-  #usageCard .meter-lg { height: 6px; margin: 7px 0 6px; }
-  #usageCard .today-row { font-size: 12px; }
-  #u5h { display: none; }
-  /* hours saved: one line, details on click */
-  #prodCard { padding: 0; }
-  #prodCard > :not(.prod-summary) { display: none; }
-  .prod-summary { display: flex; align-items: baseline; gap: 6px; width: 100%; padding: 11px 14px; border-radius: var(--radius); text-align: left; }
-  .prod-summary:hover { background: var(--raised); }
-  .ps-num { font-size: 18px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
-  .ps-num b { font-weight: 700; }
-  .ps-lbl { font-size: 12.5px; color: var(--text-2); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .ps-go { font-size: 12px; font-weight: 600; color: var(--text-2); }
-  #prodCard.open { position: fixed; right: 14px; bottom: 14px; width: 312px; max-height: min(78vh, 640px); overflow-y: auto; z-index: 40; padding: 14px 16px;
-    background: var(--pop); border-color: var(--border-strong); box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.75); }
-  #prodCard.open > * { display: revert; }
-  #prodCard.open > .prod-summary { display: none; }
-  #prodCard.open > .card-head, #prodCard.open > .saved { display: flex; }
-  #prodCard.open .tasks { max-height: none; display: flex; }
 }
 
 /* hours correction */
@@ -315,7 +319,6 @@ button.t-h.adjusted { color: var(--text); }
 button.t-h.adjusted::after { content: " ✎"; font-size: 10px; color: var(--muted); }
 .t-h-input { width: 58px; flex: none; background: var(--raised); border: 1px solid var(--accent); border-radius: 6px; color: var(--text); font: 600 11.5px var(--font); padding: 2px 5px; }
 
-@media (max-height: 940px) { #prodCard.open #pMore { display: none; } }
 
 /* ---------------- settings ---------------- */
 .icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; color: var(--text-2); flex: none; }
@@ -567,3 +570,16 @@ select.s-input { padding-right: 6px; }
 :root[data-side="left"] .main { padding: 14px 14px 14px 0; }
 :root[data-side="left"] #prodCard.open { right: auto; left: 14px; }
 :root[data-side="left"] .setup { margin-right: 0; }
+
+/* tasks: manual refresh of the hours (a Haiku pass over the exchanges not yet evaluated) */
+#prodCard .card-head { align-items: center; gap: 8px; }
+#prodCard .card-head #pCount { margin-left: auto; }
+.p-refresh { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11.5px; font-weight: 600; color: var(--text-2); background: var(--raised); white-space: nowrap; }
+.p-refresh:hover:not(:disabled) { color: var(--text); }
+.p-refresh:disabled { cursor: default; opacity: 0.8; }
+.p-refresh[hidden] { display: none; }
+.p-refresh.busy svg { animation: pSpin 0.9s linear infinite; }
+@keyframes pSpin { to { transform: rotate(360deg); } }
+/* refresh: icon only in the accordion header (label in the tooltip), spins while updating */
+#prodCard .p-refresh { width: 24px; height: 24px; padding: 0; justify-content: center; flex: none; }
+#prodCard .p-refresh > span { display: none; }

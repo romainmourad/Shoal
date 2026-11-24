@@ -7,7 +7,9 @@
 //   1. an iteration on something already counted is at most S;
 //   2. the lines of code written cap the size of dev items (they bound the size, never multiply time:
 //      an assistant writes 3 to 5 times more lines than a developer for the same feature);
-//   3. a whole turn cannot exceed RATIO x the assistant's working time for that turn.
+//   3. a whole batch cannot exceed RATIO x the assistant's working time for that batch (a loose bound:
+//      the assistant renders, edits and batch-processes far faster than a person, so a tight ratio
+//      crushed real work, e.g. 10 exported video edits counted 3 min each).
 // The user's corrections then calibrate a multiplier per type of work.
 
 export const SIZES = {
@@ -21,20 +23,21 @@ export const SIZES = {
   requete: { XS: 5,  S: 10, M: 15, L: 25,  XL: 40 },
 };
 export const ORDER = ["XS", "S", "M", "L", "XL"];
-export const RATIO = 6;          // max human time = 6 x the assistant's working time of the turn
-export const MIN_TURN = 15;      // ... but never less than 15 min (quick but valuable answers)
+export const RATIO = 12;         // max human time = 12 x the assistant's working time of the batch
+export const MIN_TURN = 20;      // ... but never less than 20 min (quick but valuable answers)
 
 // What each size means, with concrete reference points (shown to the model)
 export const SIZE_GUIDE = `SIZES (pick one per item; the duration is computed from it, do not give minutes)
 dev — XS 10 min: config change, rename, one-line fix, running a test | S 30 min: small bug fix, small UI tweak, adding an option |
-  M 75 min: contained feature (one settings section, a filter, an import, a script of ~100 useful lines) |
-  L 3 h: feature touching data + server + UI (e.g. a complete tag system with picker and filters, a theme system) |
+  M 75 min: contained feature (one settings section, a filter, an import, a simple script of ~100 useful lines with no tricky logic) |
+  L 3 h: feature touching data + server + UI (e.g. a complete tag system with picker and filters, a theme system), OR a script with real logic
+    to design and tune: image / video / audio processing, computer vision (face or blur detection), parsing many files, an external API with edge cases |
   XL 7 h: a NEW application or a new module built from scratch (rare: at most once per project)
 mail — XS reply of 2 lines | S recap or follow-up | M technical or sensitive email | L long important email | XL sequence of several emails
 texte — XS a few lines | S short text (post, description) | M one page | L long text (article, script) | XL long document
 visuel — XS photo choice or variant | S simple visual | M standard design-tool visual | L logo / complex visual | XL full visual identity
 slide — S one polished slide | M 2-3 slides | L 4-6 slides | XL full deck
-video — XS cut, S touch-up (music, zoom), M short edit, L subtitled short video (≤ 90 s), XL long interview edit
+video — XS cut, S touch-up (music, zoom), M short edit, L subtitled short video (≤ 90 s), XL long interview edit; each distinct exported edit is its own item (use nb)
 analyse — XS factual answer | S quick check or small table | M analysis of existing data | L documented research with summary | XL multi-source study
 requete — XS find a link/info | S small lookup in a tool (CRM, calendar, mailbox) | M lookup across several tools
 RULES
@@ -62,7 +65,7 @@ export function priceItems(elements, { codeLines = null, workMinutes = null, mul
     let size = ORDER.includes(String(e.taille || e.size || "").toUpperCase()) ? String(e.taille || e.size).toUpperCase() : "S";
     if (e.nouveau === false) size = cap(size, "S");
     if (type === "dev" && codeLines != null) size = cap(size, maxDevSize(codeLines));
-    const nb = Math.max(1, Math.min(10, Number(e.nb) || 1));
+    const nb = Math.max(1, Math.min(60, Number(e.nb) || 1));
     const mult = Math.min(2, Math.max(0.3, Number(multipliers[type]) || 1));
     items.push({ type, quoi: String(e.quoi).slice(0, 110), nb, size, iteration: e.nouveau === false, minutes: Math.max(2, Math.round(SIZES[type][size] * mult)) });
   }

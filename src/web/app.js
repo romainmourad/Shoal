@@ -34,7 +34,7 @@ let LANG = (() => { try { return localStorage.getItem("shoal.lang") || "en"; } c
 const L = (en, fr) => (LANG === "fr" ? fr : en);
 const LOC = () => (LANG === "fr" ? "fr-FR" : "en-US");
 
-let daily = null, weeks = null, weekIdx = 0, showAllTasks = false;
+let daily = null, weeks = null, weekIdx = 0, showAllTasks = false, judging = 0;
 const TOP_N = 5;
 let ws, sessions = [], usage = null, week = null, recents = [], history = [];
 let settings = {}, autoDailyTarget = 20, homeDir = "", envInfo = null, appVersion = "";
@@ -60,6 +60,7 @@ function onMessage(m) {
     if ("usage" in m) usage = m.usage;
     if ("daily" in m) daily = m.daily || null;
     if ("weeks" in m) weeks = m.weeks || null;
+    if ("judging" in m) judging = m.judging || 0;
     if ("recents" in m) recents = m.recents || [];
     if ("history" in m) history = m.history || [];
     if ("autoDaily" in m) autoDailyTarget = m.autoDaily;
@@ -108,6 +109,9 @@ try { const th = localStorage.getItem("shoal.theme"); if (th && th !== "malachit
 try { document.documentElement.dataset.side = localStorage.getItem("shoal.side") || "right"; } catch {}
 
 
+// open a link in the default browser: the URL must be passed to window.open (the app forwards it to the browser and denies the window)
+function openLink(uri) { if (/^https?:\/\//i.test(uri)) window.open(uri, "_blank", "noopener"); }
+
 function ensureTerm(id) {
   if (terms.has(id)) return terms.get(id);
   const el = document.createElement("div");
@@ -116,10 +120,12 @@ function ensureTerm(id) {
   const term = new Terminal({
     fontFamily: '"SF Mono", Menlo, ui-monospace, monospace', fontSize: settings.fontSize || 13, lineHeight: 1.18,
     cursorBlink: false, allowProposedApi: true, macOptionIsMeta: true, scrollback: settings.scrollback || 5000, theme: termTheme(),
+    // OSC 8 links (Claude Code underlines its links this way): xterm's default asks for confirmation, then opens a blank window
+    linkHandler: { activate: (_e, uri) => openLink(uri), allowNonHttpProtocols: false },
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  term.loadAddon(new WebLinksAddon.WebLinksAddon());
+  term.loadAddon(new WebLinksAddon.WebLinksAddon((_e, uri) => openLink(uri)));
   const uni = new Unicode11Addon.Unicode11Addon(); term.loadAddon(uni); term.unicode.activeVersion = "11";
   term.open(el);
   term.onData((d) => send({ t: "in", id, data: d }));
@@ -581,13 +587,14 @@ function until(ts) {
 function renderUsage() {
   $("#usageCard").hidden = settings.showLimit === false; // plan without a weekly limit: card hidden
   const w = usage?.seven_day;
-  if (!w) { $("#uPct").textContent = "—"; $("#uReset").textContent = L("waiting for data", "en attente de données"); return; }
+  render5h();
+  if (!w) { $("#uPct").textContent = "—"; $("#uReset").textContent = L("waiting…", "en attente…"); return; }
   const pct = Math.round(w.used_percentage);
-  $("#uPct").textContent = pct;
-  document.querySelector("#usageCard .card-head > span").dataset.pct = `${pct} %`;
+  $("#uPct").textContent = pct + " %";
   const r = w.resets_at ? new Date(w.resets_at * 1000) : null;
-  $("#uReset").textContent = r ? `${L("resets", "reset")} ${r.toLocaleDateString(LOC(), { weekday: "short", day: "numeric", month: "short" })} ${r.toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" })}` : "";
-  $("#uReset").title = r ? until(w.resets_at) : "";
+  // short on the row (day + time), full date and countdown on hover
+  $("#uReset").textContent = r ? `${r.toLocaleDateString(LOC(), { weekday: "short" })} ${r.toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" })}` : "";
+  $("#uReset").title = r ? `${L("Resets", "Reset")} ${r.toLocaleDateString(LOC(), { weekday: "long", day: "numeric", month: "long" })} · ${until(w.resets_at)}` : "";
   // color: today's pace vs. today's target (settings ⚙: weekly target / working days)
   const t = daily?.today, target = daily?.target || 20, warn = (daily?.warnAt || 80) / 100, weekly = daily?.weeklyTarget || 100;
   const level = t == null ? "" : t > target ? "over" : t > target * warn ? "near" : "ok";
@@ -601,10 +608,23 @@ function renderUsage() {
   setHTML($("#uToday"), t == null ? "" : daily.weekend
     ? `<span class="dot"></span><span>${L(`Day off · ${t} % used today`, `Jour non travaillé · ${t} % utilisés aujourd'hui`)}</span>`
     : `<span class="dot"></span><span>${L("Today", "Aujourd'hui")} <b>${t}&nbsp;%</b> / ${target}&nbsp;% ${L("recommended", "recommandés")}${level === "over" ? L(" · exceeded", " · dépassé") : ""}</span>`);
-  const h = usage.five_hour;
-  $("#u5h").textContent = h && h.used_percentage >= 50 ? `${L("5-hour window", "Fenêtre 5 h")} : ${Math.round(h.used_percentage)} % · ${until(h.resets_at)}` : pct > weekly ? L(`Weekly goal (${weekly} %) exceeded`, `Objectif de la semaine (${weekly} %) dépassé`) : "";
+  $("#u5h").textContent = pct > weekly ? L(`Weekly goal (${weekly} %) exceeded`, `Objectif de la semaine (${weekly} %) dépassé`) : "";
   if (level === "over" && !daily.weekend) warnOverOnce(t, target);
 }
+
+// 5-hour rolling window: its own gauge (a past window counts as 0 %)
+function render5h() {
+  const h = usage?.five_hour, ends = h?.resets_at ? h.resets_at * 1000 : 0, live = h && ends > Date.now();
+  const p = live ? Math.round(h.used_percentage) : h ? 0 : null;
+  $("#u5Pct").textContent = p == null ? "—" : p + " %";
+  const bar = $("#u5Bar");
+  bar.style.width = Math.min(100, p || 0) + "%";
+  bar.style.background = p >= 90 ? "var(--crit)" : p >= 70 ? "var(--warn)" : "var(--good)";
+  const ms = live ? ends - Date.now() : 0, hh = Math.floor(ms / 36e5), mm = String(Math.floor((ms % 36e5) / 6e4)).padStart(2, "0");
+  $("#u5Reset").textContent = live ? `${hh} h ${mm}` : "";
+  $("#u5Reset").title = live ? `${L("Resets at", "Reset à")} ${new Date(ends).toLocaleTimeString(LOC(), { hour: "2-digit", minute: "2-digit" })}` : "";
+}
+setInterval(() => { if (usage) render5h(); }, 60e3); // the countdown moves even without new data
 
 // a single alert per day when today's target is exceeded ("Notify…" setting)
 function warnOverOnce(t, target) {
@@ -642,9 +662,13 @@ function renderWeek() {
   if (!Array.isArray(week.tasks)) { // server not restarted yet
     $("#pSaved").textContent = "—"; $("#pSub").textContent = L("Restart Shoal to enable task tracking", "Redémarre Shoal pour activer le suivi des tâches"); $("#pTasks").innerHTML = ""; return;
   }
+  const rb = $("#pRefresh"); rb.hidden = week.current === false; rb.classList.toggle("busy", judging > 0); rb.disabled = judging > 0;
+  rb.title = judging > 0 ? L("Updating the hours…", "Mise à jour des temps…") : L("Update the hours now", "Mettre à jour les temps maintenant");
   $("#pSaved").textContent = fmtH(week.savedH);
+  $("#prodSummary .ps-go-txt").textContent = $("#prodCard").classList.contains("open") ? L("Collapse", "Réduire") : L("Details", "Détails");
   $("#psSaved").textContent = fmtH(week.savedH);
-  document.querySelector(".ps-lbl").textContent = week.current === false ? `${L("saved", "économisées")} · ${weekLabel(week)}` : L("saved this week", "économisées cette semaine");
+  document.querySelector(".ps-lbl").textContent = week.current === false ? `${L("saved", "économisées")} · ${weekLabel(week)}` : L("saved", "économisées");
+  $("#prodSummary").title = `${weekLabel(week)}${week.tasks?.length ? ` · ${week.done} / ${week.tasks.length} ${L("tasks done", "tâches faites")}` : ""}`;
   $("#pCount").textContent = week.tasks.length ? `${week.done} / ${week.tasks.length} ${L("done", "faites")}` : "";
   $("#pSub").textContent = week.tasks.length ? "" : week.current === false ? L("No tasks that week", "Aucune tâche cette semaine-là") : L("Tasks appear as you work with Claude", "Les tâches apparaissent au fil de tes conversations");
   // ranking by time saved, full list on demand
@@ -665,17 +689,21 @@ function renderWeek() {
 
 $("#wkPrev").addEventListener("click", () => { weekIdx++; renderWeek(); });
 $("#pMore").addEventListener("click", () => { showAllTasks = !showAllTasks; renderWeek(); });
-// small screen: the hours card collapses to one line; a click opens the details over the column
+// the hours card is one line (hours saved); a click opens the details over the column
 const prodCard = $("#prodCard");
+// accordion inside the column: opening takes room from the conversation list (never covers the limits card);
+// the header (hours + chevron) stays visible and closes it again; the state is remembered
 function setProdOpen(open) {
   prodCard.classList.toggle("open", open);
   $("#prodSummary").setAttribute("aria-expanded", String(open));
+  $("#prodSummary .ps-go-txt").textContent = open ? L("Collapse", "Réduire") : L("Details", "Détails");
+  try { localStorage.setItem("shoal.prodOpen", open ? "1" : ""); } catch {}
   if (open) { showAllTasks = true; renderWeek(); }
 }
 $("#prodSummary").addEventListener("click", (e) => { e.stopPropagation(); setProdOpen(!prodCard.classList.contains("open")); });
-document.addEventListener("click", (e) => { if (prodCard.classList.contains("open") && !prodCard.contains(e.target)) setProdOpen(false); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") setProdOpen(false); });
+try { if (localStorage.getItem("shoal.prodOpen")) setProdOpen(true); } catch {}
 $("#wkNext").addEventListener("click", () => { weekIdx = Math.max(0, weekIdx - 1); renderWeek(); });
+$("#pRefresh").addEventListener("click", (e) => { e.stopPropagation(); send({ t: "tasksRefresh" }); });
 
 // tooltips (tasks + method)
 const tip = $("#tip");
@@ -688,8 +716,8 @@ function showTip(el, html) {
 $("#pTasks").addEventListener("mouseover", (e) => { const n = e.target.closest("[data-tip]"); if (n) showTip(n, n.dataset.tip); });
 $("#pTasks").addEventListener("mouseleave", () => (tip.hidden = true));
 const METHOD = () => LANG !== "fr"
-  ? "<b>How it's calculated</b><br>After each reply, every item Claude actually produced (a fix, a feature, an email, a slide…) is classified by size, from XS to XL, against fixed reference points (e.g. dev: small fix 30 min, contained feature 75 min, feature touching data + UI 3 h, new app 7 h). The duration comes from that table, not from the model. Safeguards: improving or redoing something already counted is an iteration (30 min at most); the code Claude wrote can only cap the size, since it writes 3 to 5 times more lines than a developer would; a reply never counts more than 6 times Claude's working time. The time you spent steering the AI is subtracted. Click a task's hours to correct them: your corrections adjust future estimates for that type of work."
-  : "<b>Comment c'est calculé</b><br>Après chaque réponse, chaque élément réellement produit par Claude (un correctif, une fonctionnalité, un mail, une slide…) est classé par taille, de XS à XL, selon des repères fixes (ex. dev : petit correctif 30 min, fonctionnalité contenue 75 min, fonctionnalité qui touche données + interface 3 h, nouvelle app 7 h). La durée vient de ce tableau, pas du modèle. Garde-fous : améliorer ou refaire quelque chose de déjà compté est une itération (30 min au plus) ; le code écrit par Claude sert seulement de plafond, car il écrit 3 à 5 fois plus de lignes qu'un développeur ; une réponse ne compte jamais plus de 6 fois le temps de travail de Claude. Le temps passé à piloter l'IA est retiré. Clique sur les heures d'une tâche pour les corriger : tes corrections ajustent les estimations suivantes pour ce type de travail.";
+  ? "<b>How it's calculated</b><br>When a conversation pauses for a few minutes (or when you click Refresh), every item Claude actually produced since the last update (a fix, a feature, an email, a slide…) is classified by size, from XS to XL, against fixed reference points (e.g. dev: small fix 30 min, contained feature 75 min, feature touching data + UI or a script with real logic such as image processing 3 h, new app 7 h). The duration comes from that table, not from the model. Safeguards: improving or redoing something already counted is an iteration (30 min at most); the code Claude wrote can only cap the size, since it writes 3 to 5 times more lines than a developer would; a batch never counts more than 12 times Claude's working time. The time you spent steering the AI is subtracted. Click a task's hours to correct them: your corrections adjust future estimates for that type of work."
+  : "<b>Comment c'est calculé</b><br>Quand une conversation marque une pause de quelques minutes (ou quand tu cliques sur Rafraîchir), chaque élément réellement produit par Claude depuis la dernière mise à jour (un correctif, une fonctionnalité, un mail, une slide…) est classé par taille, de XS à XL, selon des repères fixes (ex. dev : petit correctif 30 min, fonctionnalité contenue 75 min, fonctionnalité qui touche données + interface ou script avec une vraie logique comme du traitement d'image 3 h, nouvelle app 7 h). La durée vient de ce tableau, pas du modèle. Garde-fous : améliorer ou refaire quelque chose de déjà compté est une itération (30 min au plus) ; le code écrit par Claude sert seulement de plafond, car il écrit 3 à 5 fois plus de lignes qu'un développeur ; un lot ne compte jamais plus de 12 fois le temps de travail de Claude. Le temps passé à piloter l'IA est retiré. Clique sur les heures d'une tâche pour les corriger : tes corrections ajustent les estimations suivantes pour ce type de travail.";
 $("#pInfo").addEventListener("mouseenter", (e) => showTip(e.target, METHOD()));
 $("#pInfo").addEventListener("mouseleave", () => (tip.hidden = true));
 $("#pTasks").addEventListener("click", (e) => {
@@ -914,7 +942,7 @@ const SETTINGS_UI = () => [
       options: [[2000, "2k"], [5000, "5k"], [10000, "10k"], [20000, "20k"]] },
   ] },
   { id: "productivity", title: L("Productivity", "Productivité"), rows: [
-    { key: "productivity", type: "toggle", label: L("Track hours saved", "Suivi des heures économisées"), desc: L("Haiku reviews each reply (tasks, hours, status line). Turning it off saves one Haiku call per reply", "Haiku analyse chaque réponse (tâches, heures, ligne « où j'en suis »). Le couper économise un appel Haiku par réponse") },
+    { key: "productivity", type: "toggle", label: L("Track hours saved", "Suivi des heures économisées"), desc: L("Haiku reviews your exchanges in batches, after each pause (tasks, hours, status line). Turning it off removes these calls", "Haiku analyse tes échanges par lots, à chaque pause (tâches, heures, ligne « où j'en suis »). Le couper supprime ces appels") },
   ] },
 ];
 const autoPreview = () => Math.max(1, Math.round((settings.weeklyTarget || 100) / Math.max(1, (settings.workdays || []).length)));

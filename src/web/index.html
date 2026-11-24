@@ -71,22 +71,28 @@
 
     <div class="cards">
       <section class="card" id="usageCard">
-        <div class="card-head"><span data-en="Weekly limit">Limite de la semaine</span><span class="muted" id="uReset"></span></div>
-        <div class="big"><span id="uPct">—</span><small>%</small></div>
-        <div class="meter meter-lg"><i id="uBar"></i><span class="u-mark" id="uMark" hidden></span></div>
+        <div class="lim-row" title="Limite de la semaine" data-en-title="Weekly limit">
+          <span class="lim-lbl" data-en="Week">Semaine</span><span class="lim-pct" id="uPct">—</span>
+          <div class="meter lim-meter"><i id="uBar"></i><span class="u-mark" id="uMark" hidden></span></div>
+          <span class="lim-reset" id="uReset"></span></div>
+        <div class="lim-row" title="Fenêtre glissante de 5 heures" data-en-title="5-hour rolling window">
+          <span class="lim-lbl" data-en="5 h">5 h</span><span class="lim-pct" id="u5Pct">—</span>
+          <div class="meter lim-meter"><i id="u5Bar"></i></div>
+          <span class="lim-reset" id="u5Reset"></span></div>
         <div class="today-row" id="uToday"></div>
         <div class="sub" id="u5h"></div>
       </section>
 
       <section class="card" id="prodCard">
         <button class="prod-summary" id="prodSummary" aria-expanded="false">
-          <span class="ps-num"><b id="psSaved">0</b> h</span><span class="ps-lbl">économisées cette semaine</span><span class="ps-go" data-en="Details ›">Détails ›</span>
+          <span class="ps-num"><b id="psSaved">0</b> h</span><span class="ps-lbl">économisées</span><span class="ps-go"><span class="ps-go-txt">Détails</span><svg class="ps-chev" viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M3 7.5 6 4.5l3 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
         </button>
         <div class="card-head">
           <span class="wk-nav"><button id="wkPrev" aria-label="Semaine précédente" data-en-aria="Previous week">‹</button><span id="pWeek">Cette semaine</span><button id="wkNext" aria-label="Semaine suivante" data-en-aria="Next week">›</button></span>
-          <span class="muted" id="pCount"></span></div>
-        <div class="saved"><span class="big" id="pSaved">0</span><small>h</small><span class="saved-lbl" data-en="of work saved">de travail économisées</span>
-          <span class="info" id="pInfo" tabindex="0" aria-label="Méthode de calcul" data-en-aria="How it's calculated">?</span></div>
+          <span class="muted" id="pCount"></span>
+          <span class="info" id="pInfo" tabindex="0" aria-label="Méthode de calcul" data-en-aria="How it's calculated">?</span>
+          <button class="p-refresh" id="pRefresh" title="Mettre à jour les temps maintenant" data-en-title="Update the hours now" aria-label="Rafraîchir" data-en-aria="Refresh"><svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-en="Refresh">Rafraîchir</span></button></div>
+        <div class="saved" hidden><span class="big" id="pSaved">0</span></div>
         <div class="sub" id="pSub"></div>
         <ul class="tasks" id="pTasks"></ul>
         <button class="more" id="pMore" hidden></button>

@@ -197,7 +197,7 @@ function createSession(cwd, resume, model, { remember = true } = {}) {
   const s = {
     id, num, cwd, emoji: "", title: "", named: false, gen: 0, naming: -1,
     state: "idle", unread: false, ctx: null, model: "", claudeSession: "", prompts: 0, pending: [], note: "", waitKind: "", lastTool: null, permission: null,
-    taskId: "", lastPromptAt: 0, lastStopAt: 0, dUser: 0, dWork: 0,
+    taskId: "", lastPromptAt: 0, lastStopAt: 0, dUser: 0, dWork: 0, answers: [], toolsSince: 0, batchStart: 0, judgeTimer: null, stopData: null,
     historySid: resumeArg ? resume.sid : "",
     createdAt: Date.now(), lastActivity: Date.now(), pty: term, buf: [], bufLen: 0,
   };
@@ -225,13 +225,16 @@ const killPty = (s, sig) => { try { WIN ? s.pty.kill() : s.pty.kill(sig); } catc
 function closeSession(id) {
   const s = sessions.get(id);
   if (!s) return;
+  flushJudge(s, { closing: true }); // the last exchanges are still evaluated after the conversation is closed
   killPty(s, "SIGHUP");
   setTimeout(() => { if (sessions.has(id)) { killPty(s, "SIGKILL"); sessions.delete(id); broadcastState(); } }, 1500);
 }
 
 // ---------- background Haiku calls (through the user's own Claude Code login)
 let haikuRuns = 0; // shown in the settings footer
-const HAIKU_ARGS = ["--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config", "--tools", "", "--disable-slash-commands"];
+// a minimal system prompt replaces Claude Code's default one (~3,000 tokens per call, useless here: no tools, one-shot answer)
+const HAIKU_ARGS = ["--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config", "--tools", "", "--disable-slash-commands",
+  "--system-prompt", "You are a precise classifier. Follow the instructions in the user message and output only what it asks for."];
 function runHaiku(prompt, model = "haiku", effort, timeout = 90000) {
   haikuRuns++;
   return new Promise((resolve) => {
@@ -299,15 +302,20 @@ function onHook(s, event, data) {
     if (data.session_id) s.claudeSession = data.session_id;
     s.ready = true; // Claude Code is up (folder trusted): a prompt can be pasted
     if (data.source === "clear") s.historySid = "";
-    if (data.source !== "compact" && !(data.source === "resume" && s.historySid)) Object.assign(s, { gen: s.gen + 1, emoji: "", title: "", named: false, naming: -1, unread: false, pending: [] });
+    if (data.source !== "compact" && !(data.source === "resume" && s.historySid)) {
+      flushJudge(s, { closing: true }); // /clear: the work done before is still evaluated (its batch keeps its requests)
+      Object.assign(s, { gen: s.gen + 1, emoji: "", title: "", named: false, naming: -1, unread: false });
+    }
     s.state = "idle";
   } else if (event === "prompt") {
     s.state = "working"; s.unread = false; s.prompts++; s.waitKind = ""; s.permission = null;
     const now = Date.now();
     s.dUser += s.lastStopAt ? Math.min(now - s.lastStopAt, 10 * 60e3) : 2 * 60e3; // reading the answer + writing the message (10 min cap)
     s.lastPromptAt = now;
+    if (s.judgeTimer) { clearTimeout(s.judgeTimer); s.judgeTimer = null; } // the user is still at it: wait for the next pause
+    if (!s.batchStart) s.batchStart = now;
     const p = (data.prompt || "").trim();
-    if (p && !p.startsWith("/")) { s.pending.push(p.replace(/\s+/g, " ").slice(0, 400)); s.pending = s.pending.slice(-8); }
+    if (p && !p.startsWith("/")) { s.pending.push(p.replace(/\s+/g, " ").slice(0, 400)); s.pending = s.pending.slice(-12); }
     if (!s.named && s.naming !== s.gen && p && !p.startsWith("/")) {
       s.naming = s.gen;
       if (settings.autoName && env.claude) nameSession(s, s.gen, p);
@@ -320,6 +328,7 @@ function onHook(s, event, data) {
   } else if (event === "pretool") {
     // nothing visible changes: remember the tool (to show a possible permission request) without broadcasting
     s.lastTool = { name: data.tool_name || "", detail: data.detail || "", ts: Date.now() };
+    s.toolsSince++;
     return;
   } else if (event === "tool") {
     if (s.state !== "waiting") return;
@@ -328,7 +337,7 @@ function onHook(s, event, data) {
     s.state = "done"; s.unread = true; s.waitKind = ""; s.permission = null;
     if (s.lastPromptAt) s.dWork += Date.now() - s.lastPromptAt;
     s.lastStopAt = Date.now();
-    if (settings.productivity && env.claude) queueJudge(s, data);
+    if (settings.productivity && env.claude) scheduleJudge(s, data);
     else s.pending = [];
     remember(s);
     broadcast({ t: "alert", id: s.id, kind: "done" });
@@ -416,20 +425,60 @@ function measureTurn(s, data) {
   } catch {}
   s.lastCodeLines = m.shell ? null : m.code; // caps the size of dev items (see estimate.mjs)
   const parts = [];
-  if (m.code) parts.push(`${m.code} lines of code added or changed by the assistant in ${m.files.size} file(s) (a developer would write 3 to 5 times fewer for the same result)`);
+  if (m.code) parts.push(`${m.code} lines of code added or changed by the assistant in ${m.files.size} file(s) (already used by the app to cap dev sizes: classify by what the code does, not by its length)`);
   if (m.mails.length) parts.push(`${m.mails.length} email(s) written: ${m.mails.map((w) => w + " words").join(", ")}`);
   if (m.doc) parts.push(`${m.doc} words written in documents`);
+  if (m.shell) parts.push(`${m.shell} file(s) or script(s) written through the terminal (line count unknown: judge by what was built)`);
   return parts.length ? parts.join("; ") : "no code, email or document written";
 }
 
 // one Haiku evaluation at a time: each call starts a `claude` process (~200 MB for a few seconds),
 // so 3 conversations finishing together no longer start 3 in parallel
-let judging = Promise.resolve();
-function queueJudge(s, data) { judging = judging.then(() => judgeTurn(s, data)).catch(() => {}); }
+let judging = Promise.resolve(), judgeQueued = 0;
+function queueJudge(s, data) {
+  judgeQueued++; broadcastState();
+  judging = judging.then(() => judgeTurn(s, data)).catch(() => {}).finally(() => { judgeQueued--; broadcastState(); });
+}
+
+// Exchanges are evaluated IN BATCHES, not after every reply: one Haiku call once the conversation has been quiet
+// for JUDGE_IDLE (the user reads, tests, or moved to another conversation), or right away when the batch gets big.
+// Batches with no tool use and a short answer (a quick question) never trigger a call on their own: they are merged
+// into the next real batch. The "Refresh" button and closing a conversation flush the batch at once.
+const JUDGE_IDLE = Number(process.env.SHOAL_JUDGE_IDLE_MS) || 4 * 60e3, JUDGE_MAX_PROMPTS = 6, JUDGE_MAX_AGE = 45 * 60e3;
+function scheduleJudge(s, data) {
+  s.stopData = data;
+  const txt = lastAssistantText(data);
+  if (txt) { s.answers.push(txt.slice(-1500)); s.answers = s.answers.slice(-8); }
+  if (s.judgeTimer) clearTimeout(s.judgeTimer);
+  s.judgeTimer = null;
+  if (s.pending.length >= JUDGE_MAX_PROMPTS || (s.batchStart && Date.now() - s.batchStart > JUDGE_MAX_AGE)) return flushJudge(s);
+  s.judgeTimer = setTimeout(() => { s.judgeTimer = null; flushJudge(s); }, JUDGE_IDLE);
+}
+const trivialBatch = (s) => s.toolsSince === 0 && words(s.answers.join(" ")) < 150;
+function flushJudge(s, { force = false, closing = false } = {}) {
+  if (s.judgeTimer) { clearTimeout(s.judgeTimer); s.judgeTimer = null; }
+  if (!s.stopData || !s.answers.length || s.judging) return false;
+  if (!force && trivialBatch(s)) { if (closing) Object.assign(s, { answers: [], pending: [], toolsSince: 0, batchStart: 0 }); return false; }
+  s.judging = true; // one batch per conversation at a time (the next one waits for the next stop or refresh)
+  queueJudge(s, s.stopData);
+  return true;
+}
+function refreshTasks() {
+  if (!settings.productivity || !env.claude) return;
+  for (const s of sessions.values()) flushJudge(s, { force: true });
+}
 
 async function judgeTurn(s, data) {
-  const asked = s.pending.slice();
-  const answer = lastAssistantText(data).slice(-2500);
+  try { await judgeBatch(s, data); } finally {
+    s.judging = false;
+    // replies that arrived during the call: evaluated at the next pause
+    if (s.answers.length && sessions.has(s.id) && !s.judgeTimer) s.judgeTimer = setTimeout(() => { s.judgeTimer = null; flushJudge(s); }, JUDGE_IDLE);
+  }
+}
+async function judgeBatch(s, data) {
+  const asked = s.pending.slice(), nAnswers = s.answers.length, tools = s.toolsSince;
+  // the assistant's final answers of the batch, most recent last (bounded: ~4,000 characters in total)
+  const answer = s.answers.map((a, i) => (nAnswers > 1 ? `[reply ${i + 1}/${nAnswers}] ` : "") + a).join("\n\n").slice(-4000);
   const measures = measureTurn(s, data);
   const dUser = s.dUser, dWork = s.dWork;
   if (!answer) return;
@@ -456,12 +505,14 @@ async function judgeTurn(s, data) {
     "Objective measures of this exchange: " + measures + "\n" +
     "Conversation title: " + (s.title || "?") + "\n" +
     "User requests since the last evaluation:\n- " + (asked.length ? asked.join("\n- ") : "(none)") +
-    "\n\nFinal answer of the assistant:\n" + answer;
+    `\n\nFinal answer${nAnswers > 1 ? "s" : ""} of the assistant:\n` + answer;
   const out = await runHaiku(prompt);
   let v = null;
   try { v = JSON.parse((out.match(/\{[\s\S]*\}/) || ["{}"])[0]); } catch {}
-  if (!v || !sessions.has(s.id)) return;
-  s.pending = s.pending.slice(asked.length);
+  if (!v) return;
+  // what was evaluated leaves the batch (a reply that arrived during the call stays for the next one)
+  s.pending = s.pending.slice(asked.length); s.answers = s.answers.slice(nAnswers); s.toolsSince = Math.max(0, s.toolsSince - tools);
+  s.batchStart = s.pending.length ? Date.now() : 0;
   s.dUser -= dUser; s.dWork -= dWork;
   if (v.statut) s.note = String(v.statut).replace(/^["'\s]+|["'\s]+$/g, "").slice(0, 110);
 
@@ -678,6 +729,7 @@ function stateParts() {
     env: { checked: env.checked, claude: !!env.claude, python: !!env.python },
     history: history.items.filter((h) => !h.hidden).map(({ sid, cwd, emoji, title, end, prompts, tag, source }) => ({ sid, cwd, emoji, title, end, prompts, tag, source, open: openSids.has(sid) })),
     weeks: settings.productivity ? allWeeks() : [],
+    judging: judgeQueued,
   };
   const out = {};
   for (const [k, v] of Object.entries(p)) out[k] = JSON.stringify(v);
@@ -813,6 +865,7 @@ wss.on("connection", (ws) => {
         saveTasks(); broadcastState();
       }
     }
+    else if (m.t === "tasksRefresh") refreshTasks();
     else if (m.t === "taskRemove") { const t = taskStore.tasks.find((x) => x.id === m.task); if (t) { t.removed = true; saveTasks(); broadcastState(); } }
     else if (m.t === "settings" && m.patch && typeof m.patch === "object") {
       settings = cleanSettings(m.patch, settings); writeJSON("settings.json", settings);
