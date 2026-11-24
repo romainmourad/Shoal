@@ -90,13 +90,37 @@ Nothing else: Shoal ships its own runtime, no Node.js needed.
 <a id="install"></a>
 ## Install
 
+Paste this in Terminal (macOS, Apple silicon or Intel):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/romainmourad/Shoal/main/install.sh | bash
+```
+
+It downloads the latest release from GitHub, puts **Shoal.app** in your Applications folder and opens it. No security prompt: macOS only blocks apps downloaded with a browser. The script is short, [read it](install.sh) if you like.
+
+<details>
+<summary>Manual install</summary>
+
 1. Download `Shoal-<version>-mac-arm64.zip` (Apple silicon) or `…-mac-x64.zip` (Intel) from the [Releases](https://github.com/romainmourad/Shoal/releases) page.
 2. Unzip it and move **Shoal.app** to your **Applications** folder.
 3. **First launch.** The app is not notarized by Apple (that requires a paid developer account), so macOS blocks it the first time. Either:
    - open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**; or
    - run this in a terminal: `xattr -dr com.apple.quarantine /Applications/Shoal.app`
+</details>
 
 If something is missing (Claude Code or Python), Shoal tells you what to install and lets you check again.
+
+### Update
+
+Run the same command again:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/romainmourad/Shoal/main/install.sh | bash
+```
+
+It quits Shoal, replaces it with the latest version and opens it again. Open conversations are resumed; your history, tasks and settings (in `~/Library/Application Support/Shoal`) are kept.
+
+When a release brings important fixes, Shoal shows a banner with an **Update** button: it explains what will happen, then opens Terminal with this command once you confirm. Minor releases don't show the banner. On Windows, download the new zip from the [Releases](https://github.com/romainmourad/Shoal/releases) page and replace the folder.
 
 ### Windows (experimental)
 
@@ -142,6 +166,7 @@ Shoal runs entirely on your Mac. There is no Shoal server, account, analytics or
 
   Each one can be turned off in Settings.
 - History import reads your Claude Code transcripts in `~/.claude/projects` locally, to list the last 30 days of conversations. It can be turned off.
+- **Update check.** At launch and twice a day, Shoal asks GitHub which release is the latest (one request to `github.com/romainmourad/Shoal/releases/latest`, nothing about you is sent).
 - Shoal never modifies your `~/.claude/settings.json`: its hooks and status line are passed to the conversations it starts with `claude --settings`.
 
 ## How it works

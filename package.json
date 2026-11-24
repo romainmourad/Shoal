@@ -1,7 +1,7 @@
 {
   "name": "shoal",
   "productName": "Shoal",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "A desktop workspace for running several Claude Code conversations side by side.",
   "license": "MIT",
   "private": true,

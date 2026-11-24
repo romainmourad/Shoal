@@ -2,6 +2,7 @@
 // Claude Code hooks, names each conversation (emoji + title, via Haiku), estimates the hours saved,
 // and serves the web UI shown in the Shoal window. Everything stays on 127.0.0.1.
 import http from "node:http";
+import https from "node:https";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -737,6 +738,36 @@ function dailyUsage() {
     weekend, warnAt: settings.warnAt, weeklyTarget: settings.weeklyTarget };
 }
 
+// ---------- updates
+// The latest release on GitHub, checked at launch and twice a day. The UI only shows a banner for an
+// important release (first or second number changed, e.g. 1.0.x → 1.1.0); patches (1.0.2) stay silent.
+// On macOS, "Update" opens Terminal with the install command (install.sh: download, replace, reopen).
+const REPO = "romainmourad/Shoal";
+const INSTALL_CMD = `curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | bash`;
+let update = null;
+const vnum = (v) => String(v).split(".").map((n) => parseInt(n, 10) || 0);
+function checkUpdate() {
+  if (process.env.SHOAL_NO_UPDATE_CHECK) return;
+  const req = https.get(`https://github.com/${REPO}/releases/latest`, { headers: { "user-agent": "Shoal" }, timeout: 10000 }, (res) => {
+    res.resume();
+    const m = String(res.headers.location || "").match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
+    if (!m) return;
+    const [a, b, c] = vnum(m[1]), [x, y, z] = vnum(process.env.SHOAL_FAKE_VERSION || VERSION);
+    const newer = a !== x ? a > x : b !== y ? b > y : c > z;
+    update = newer ? { version: m[1], major: a > x || (a === x && b > y), cmd: INSTALL_CMD, url: `https://github.com/${REPO}/releases/latest` } : null;
+    broadcastState();
+  });
+  req.on("error", () => {});
+  req.on("timeout", () => req.destroy());
+}
+function runUpdate() {
+  if (process.platform !== "darwin") return;
+  const f = path.join(DATA, "update.command");
+  fs.writeFileSync(f, `#!/bin/bash\n# Shoal update: downloads the latest version from GitHub, replaces the app and reopens it\n${INSTALL_CMD}\n`);
+  fs.chmodSync(f, 0o755);
+  execFile("open", ["-a", "Terminal", f], () => {});
+}
+
 // ---------- broadcasting to the UI
 // The state is split into parts; each broadcast only sends the parts that changed since the previous one.
 const clients = new Set();
@@ -745,7 +776,7 @@ function stateParts() {
   const openSids = new Set([...sessions.values()].flatMap((x) => [x.historySid, x.claudeSession]).filter(Boolean));
   const p = {
     sessions: [...sessions.values()].sort((a, b) => a.num - b.num).map(publicSession),
-    usage, daily: dailyUsage(), recents, settings, autoDaily: autoDaily(), home: HOME, version: VERSION,
+    usage, daily: dailyUsage(), recents, settings, autoDaily: autoDaily(), home: HOME, version: VERSION, update,
     env: { checked: env.checked, claude: !!env.claude, python: !!env.python },
     history: history.items.filter((h) => !h.hidden).map(({ sid, cwd, emoji, title, end, prompts, tag, source }) => ({ sid, cwd, emoji, title, end, prompts, tag, source, open: openSids.has(sid) })),
     weeks: settings.productivity ? allWeeks() : [],
@@ -893,6 +924,7 @@ wss.on("connection", (ws) => {
       broadcastState();
     }
     else if (m.t === "sync" && s) ws.send(JSON.stringify({ t: "replay", id: s.id, data: s.buf.join("") })); // terminal left in the background for too long
+    else if (m.t === "update") runUpdate();
     else if (m.t === "recheck") findTools().then(() => { writeClaudeSettings(); broadcastState(); });
     else if (m.t === "stats") {
       const mem = process.memoryUsage();
@@ -941,6 +973,7 @@ server.listen(PORT, HOST, async () => {
   await findTools();
   writeClaudeSettings();
   broadcastState();
+  checkUpdate(); setInterval(checkUpdate, 12 * 3600_000).unref();
   // restart: reopen the conversations that were open (see saveOpen)
   const reopen = (readJSON("reopen.json", []) || []).filter((r) => UUID.test(r.sid || ""));
   try { fs.unlinkSync(path.join(DATA, "reopen.json")); } catch {}

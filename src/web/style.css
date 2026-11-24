@@ -373,6 +373,11 @@ select.s-input { padding-right: 6px; }
 .setup p { margin: 4px 0 0; color: var(--text-2); }
 .setup p b { color: var(--text); }
 .setup code { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,0.3); padding: 1px 6px; border-radius: 6px; color: var(--text); user-select: all; }
+.update { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.update .setup-title { color: var(--accent); }
+.update code { display: block; width: fit-content; max-width: 100%; margin-top: 6px; word-break: break-all; }
+.update .upd-go { white-space: nowrap; }
+.update .upd-x { padding-inline: 8px; }
 
 /* ---------------- tags (Notion-like) ---------------- */
 .tagpill { display: inline-flex; align-items: center; max-width: 130px; padding: 0 7px; border-radius: 4px; font-size: 11.5px; font-weight: 500; line-height: 19px;

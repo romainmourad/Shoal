@@ -37,7 +37,7 @@ const LOC = () => (LANG === "fr" ? "fr-FR" : "en-US");
 let daily = null, weeks = null, weekIdx = 0, showAllTasks = false, judging = 0;
 const TOP_N = 5;
 let ws, sessions = [], usage = null, week = null, recents = [], history = [];
-let settings = {}, autoDailyTarget = 20, homeDir = "", envInfo = null, appVersion = "";
+let settings = {}, autoDailyTarget = 20, homeDir = "", envInfo = null, appVersion = "", updateInfo = null;
 const IS_APP = /Electron/.test(navigator.userAgent) || new URLSearchParams(location.search).has("app");
 if (IS_APP) document.documentElement.classList.add("is-app");
 let tab = location.hash === "#hist" ? "hist" : (localStorage.getItem("shoal.tab") || "convs");
@@ -67,6 +67,7 @@ function onMessage(m) {
     if ("home" in m) homeDir = m.home;
     if ("env" in m) envInfo = m.env;
     if ("version" in m) appVersion = m.version;
+    if ("update" in m) updateInfo = m.update || null;
     if ("settings" in m) { settings = m.settings || {}; applySettings(); maybeStartTour(); }
     if ("sessions" in m) syncTerms();
     render();
@@ -375,7 +376,7 @@ function render() {
   const unread = badge === "none" ? 0 : sessions.filter((x) => x.unread && (badge === "all" || x.state === "waiting")).length;
   document.title = unread ? `(${unread}) Shoal` : "Shoal";
 
-  renderTagBar(); renderTabs(); renderHistory(); renderUsage(); renderWeek(); renderSetup(); pruneToasts();
+  renderTagBar(); renderTabs(); renderHistory(); renderUsage(); renderWeek(); renderSetup(); renderUpdate(); pruneToasts();
 }
 
 // ---------------------------------------------------------------- tags: filter bar, picker (Notion-like), editor
@@ -543,6 +544,48 @@ function renderSetup() {
     <button class="btn btn-ghost btn-sm" data-act="recheck">${L("Check again", "Vérifier à nouveau")}</button>`);
 }
 $("#setup").addEventListener("click", (e) => { if (e.target.closest('[data-act="recheck"]')) { send({ t: "recheck" }); e.target.closest("button").textContent = "…"; $("#setup")._h = null; } });
+
+// ---------------------------------------------------------------- update banner
+// Only for an important release (see checkUpdate in the server). Closing it hides it until the next one.
+// "Update" first explains what will happen, then (macOS) opens Terminal with the install command.
+let updateStep = "";
+const updDismissed = () => { try { return localStorage.getItem("shoal.updateDismissed") || ""; } catch { return ""; } };
+function renderUpdate() {
+  const el = $("#update"), u = updateInfo;
+  const show = !!(u && u.major && updDismissed() !== u.version);
+  el.hidden = !show;
+  if (!show) { el._k = ""; return; }
+  const key = `${u.version}|${updateStep}|${LANG}`;
+  if (el._k === key) return; // unchanged: keep the DOM (and the selection in the command)
+  el._k = key;
+  const mac = (window.shoal?.platform || "darwin") === "darwin";
+  const close = `<button class="btn btn-ghost btn-sm upd-x" data-act="upd-close" title="${L("Close", "Fermer")}" aria-label="${L("Close", "Fermer")}">✕</button>`;
+  if (updateStep === "confirm") {
+    setHTML(el, `<div class="setup-body"><b class="setup-title">${L(`Update to Shoal ${esc(u.version)}?`, `Mettre à jour vers Shoal ${esc(u.version)} ?`)}</b>
+      <p>${L("Shoal will open Terminal and run this command:", "Shoal va ouvrir le Terminal et lancer cette commande :")} <code>${esc(u.cmd)}</code></p>
+      <p>${L("It downloads the latest version of Shoal from GitHub and replaces the app. Shoal then quits and reopens by itself: open conversations are resumed, your history and settings are kept.",
+             "Elle télécharge la dernière version de Shoal depuis GitHub et remplace l'app. Shoal se ferme puis se rouvre tout seul : les conversations ouvertes sont reprises, l'historique et les réglages sont conservés.")}</p></div>
+      <button class="btn btn-primary btn-sm upd-go" data-act="upd-run">${L("Run the update", "Lancer la mise à jour")}</button>
+      <button class="btn btn-ghost btn-sm" data-act="upd-cancel">${L("Cancel", "Annuler")}</button>`);
+    return;
+  }
+  const how = mac
+    ? L(`Update in one click, or paste this command in Terminal: <code>${esc(u.cmd)}</code>`, `Mets à jour en un clic, ou colle cette commande dans le Terminal : <code>${esc(u.cmd)}</code>`)
+    : L("Download it from the Releases page on GitHub.", "Télécharge-la depuis la page Releases sur GitHub.");
+  setHTML(el, `<div class="setup-body"><b class="setup-title">${L(`Shoal ${esc(u.version)} is available`, `Shoal ${esc(u.version)} est disponible`)}</b>
+    <p>${L("This version brings important fixes.", "Cette version apporte des correctifs importants.")} ${how}</p></div>
+    <button class="btn btn-primary btn-sm upd-go" data-act="${mac ? "upd-ask" : "upd-open"}">${mac ? L("Update", "Mettre à jour") : L("Download", "Télécharger")}</button>${close}`);
+}
+$("#update").addEventListener("click", (e) => {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (!act) return;
+  if (act === "upd-close") { try { localStorage.setItem("shoal.updateDismissed", updateInfo?.version || ""); } catch {} updateStep = ""; $("#update").hidden = true; $("#update")._k = ""; return; }
+  if (act === "upd-open") { window.open(updateInfo?.url || "https://github.com/romainmourad/Shoal/releases/latest", "_blank"); return; }
+  if (act === "upd-ask") updateStep = "confirm";
+  if (act === "upd-cancel") updateStep = "";
+  if (act === "upd-run") { send({ t: "update" }); updateStep = ""; }
+  renderUpdate();
+});
 
 // ---------------------------------------------------------------- history
 function dayLabel(iso) {
