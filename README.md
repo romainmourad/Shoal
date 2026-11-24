@@ -120,7 +120,7 @@ curl -fsSL https://raw.githubusercontent.com/romainmourad/Shoal/main/install.sh 
 
 It quits Shoal, replaces it with the latest version and opens it again. Open conversations are resumed; your history, tasks and settings (in `~/Library/Application Support/Shoal`) are kept.
 
-When a release brings important fixes, Shoal shows a banner with an **Update** button: it explains what will happen, then opens Terminal with this command once you confirm. Minor releases don't show the banner. On Windows, download the new zip from the [Releases](https://github.com/romainmourad/Shoal/releases) page and replace the folder.
+When a release brings important fixes, Shoal shows a banner with an **Update** button: it explains what will happen, then opens Terminal with this command once you confirm. Minor releases don't show the banner. Closed it, or want a minor release? **Settings → General → Version** always shows whether a newer version exists, with the same **Update** button (or **Check** to look again). On Windows, download the new zip from the [Releases](https://github.com/romainmourad/Shoal/releases) page and replace the folder.
 
 ### Windows (experimental)
 

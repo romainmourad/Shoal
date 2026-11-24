@@ -739,7 +739,7 @@ function dailyUsage() {
 }
 
 // ---------- updates
-// The latest release on GitHub, checked at launch and twice a day. The UI only shows a banner for an
+// The latest release on GitHub, checked at launch, twice a day and from Settings (Check). The UI only shows a banner for an
 // important release (first or second number changed, e.g. 1.0.x → 1.1.0); patches (1.0.2) stay silent.
 // On macOS, "Update" opens Terminal with the install command (install.sh: download, replace, reopen).
 const REPO = "romainmourad/Shoal";
@@ -748,16 +748,17 @@ let update = null;
 const vnum = (v) => String(v).split(".").map((n) => parseInt(n, 10) || 0);
 function checkUpdate() {
   if (process.env.SHOAL_NO_UPDATE_CHECK) return;
+  const failed = () => { update = { ...(update || {}), failed: Date.now() }; broadcastState(); };
   const req = https.get(`https://github.com/${REPO}/releases/latest`, { headers: { "user-agent": "Shoal" }, timeout: 10000 }, (res) => {
     res.resume();
     const m = String(res.headers.location || "").match(/\/tag\/v?(\d+\.\d+\.\d+)$/);
-    if (!m) return;
+    if (!m) return failed();
     const [a, b, c] = vnum(m[1]), [x, y, z] = vnum(process.env.SHOAL_FAKE_VERSION || VERSION);
     const newer = a !== x ? a > x : b !== y ? b > y : c > z;
-    update = newer ? { version: m[1], major: a > x || (a === x && b > y), cmd: INSTALL_CMD, url: `https://github.com/${REPO}/releases/latest` } : null;
+    update = { version: m[1], newer, major: newer && (a > x || (a === x && b > y)), cmd: INSTALL_CMD, url: `https://github.com/${REPO}/releases/latest`, checked: Date.now() };
     broadcastState();
   });
-  req.on("error", () => {});
+  req.on("error", failed);
   req.on("timeout", () => req.destroy());
 }
 function runUpdate() {
@@ -925,6 +926,7 @@ wss.on("connection", (ws) => {
     }
     else if (m.t === "sync" && s) ws.send(JSON.stringify({ t: "replay", id: s.id, data: s.buf.join("") })); // terminal left in the background for too long
     else if (m.t === "update") runUpdate();
+    else if (m.t === "checkUpdate") checkUpdate();
     else if (m.t === "recheck") findTools().then(() => { writeClaudeSettings(); broadcastState(); });
     else if (m.t === "stats") {
       const mem = process.memoryUsage();

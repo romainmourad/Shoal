@@ -67,7 +67,7 @@ function onMessage(m) {
     if ("home" in m) homeDir = m.home;
     if ("env" in m) envInfo = m.env;
     if ("version" in m) appVersion = m.version;
-    if ("update" in m) updateInfo = m.update || null;
+    if ("update" in m) { updateInfo = m.update || null; updateChecking = false; if (!$("#setBack").hidden) renderSettings(); }
     if ("settings" in m) { settings = m.settings || {}; applySettings(); maybeStartTour(); }
     if ("sessions" in m) syncTerms();
     render();
@@ -548,11 +548,11 @@ $("#setup").addEventListener("click", (e) => { if (e.target.closest('[data-act="
 // ---------------------------------------------------------------- update banner
 // Only for an important release (see checkUpdate in the server). Closing it hides it until the next one.
 // "Update" first explains what will happen, then (macOS) opens Terminal with the install command.
-let updateStep = "";
+let updateStep = "", updateForce = false, updateChecking = false;
 const updDismissed = () => { try { return localStorage.getItem("shoal.updateDismissed") || ""; } catch { return ""; } };
 function renderUpdate() {
   const el = $("#update"), u = updateInfo;
-  const show = !!(u && u.major && updDismissed() !== u.version);
+  const show = !!(u && u.newer && ((u.major && updDismissed() !== u.version) || updateForce));
   el.hidden = !show;
   if (!show) { el._k = ""; return; }
   const key = `${u.version}|${updateStep}|${LANG}`;
@@ -579,11 +579,11 @@ function renderUpdate() {
 $("#update").addEventListener("click", (e) => {
   const act = e.target.closest("[data-act]")?.dataset.act;
   if (!act) return;
-  if (act === "upd-close") { try { localStorage.setItem("shoal.updateDismissed", updateInfo?.version || ""); } catch {} updateStep = ""; $("#update").hidden = true; $("#update")._k = ""; return; }
+  if (act === "upd-close") { try { localStorage.setItem("shoal.updateDismissed", updateInfo?.version || ""); } catch {} updateStep = ""; updateForce = false; $("#update").hidden = true; $("#update")._k = ""; return; }
   if (act === "upd-open") { window.open(updateInfo?.url || "https://github.com/romainmourad/Shoal/releases/latest", "_blank"); return; }
   if (act === "upd-ask") updateStep = "confirm";
-  if (act === "upd-cancel") updateStep = "";
-  if (act === "upd-run") { send({ t: "update" }); updateStep = ""; }
+  if (act === "upd-cancel") { updateStep = ""; updateForce = false; }
+  if (act === "upd-run") { send({ t: "update" }); updateStep = ""; updateForce = false; }
   renderUpdate();
 });
 
@@ -963,6 +963,15 @@ function applySettings() {
 }
 
 const WD = () => LANG === "fr" ? [[1, "L"], [2, "M"], [3, "M"], [4, "J"], [5, "V"], [6, "S"], [0, "D"]] : [[1, "M"], [2, "T"], [3, "W"], [4, "T"], [5, "F"], [6, "S"], [0, "S"]];
+// Settings › General › Version: the update stays reachable after the banner was closed (and for minor releases)
+function versionDesc() {
+  const u = updateInfo;
+  if (updateChecking) return L("Checking…", "Vérification…");
+  if (u?.newer) return L(`Shoal ${u.version} is available`, `Shoal ${u.version} est disponible`);
+  if (u?.failed && (!u.checked || u.failed > u.checked)) return L("Could not reach GitHub", "GitHub est injoignable");
+  if (u?.checked) return L("Up to date", "À jour");
+  return "";
+}
 const SETTINGS_UI = () => [
   { id: "appearance", title: L("Appearance", "Apparence"), rows: [
     { key: "theme", type: "themes", label: L("Theme", "Thème") },
@@ -970,6 +979,8 @@ const SETTINGS_UI = () => [
     { key: "fontSize", type: "num", min: 10, max: 20, step: 1, unit: "px", label: L("Terminal text size", "Taille du texte du terminal") },
   ] },
   { id: "general", title: L("General", "Général"), rows: [
+    { key: "version", type: "action", label: `Version ${appVersion}`, desc: versionDesc,
+      button: updateChecking ? "…" : updateInfo?.newer ? (IS_MAC ? L("Update", "Mettre à jour") : L("Download", "Télécharger")) : L("Check", "Vérifier") },
     { key: "lang", type: "seg", label: L("Language", "Langue"), options: [["en", "English"], ["fr", "Français"]] },
     { key: "tour", type: "action", label: L("Quick tour of the interface", "Visite rapide de l'interface"), button: L("Show", "Afficher") },
     { key: "keepRunning", type: "toggle", label: L("Keep conversations running after quitting", "Garder les conversations actives après avoir quitté"),
@@ -1084,6 +1095,11 @@ $("#setBody").addEventListener("click", (e) => {
   const run = e.target.closest("[data-run]");
   if (run?.dataset.run === "importNow") { send({ t: "importHistory" }); run.textContent = "…"; return; }
   if (run?.dataset.run === "tour") { startTour(); return; }
+  if (run?.dataset.run === "version") {
+    if (!updateInfo?.newer) { updateChecking = true; send({ t: "checkUpdate" }); renderSettings(); return; }
+    if (!IS_MAC) { window.open(updateInfo.url, "_blank"); return; }
+    updateForce = true; updateStep = "confirm"; openSettings(false); renderUpdate(); return; // same explanation and confirmation as the banner
+  }
   const ed = e.target.closest("[data-tagedit]") || (e.target.closest(".tg-row[data-id] .tagpill") && e.target.closest(".tg-row"));
   if (ed) { e.stopPropagation(); openTagEditor(ed, ed.dataset.tagedit || ed.dataset.id); return; }
   const b = e.target.closest("button[data-k]"); if (!b) return;
